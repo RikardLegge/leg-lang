@@ -30,9 +30,9 @@ struct Tokenizer<'a> {
     tokens: Vec<Token>,
     target: &'a str,
 
-    start_index: usize,
     current_index: usize,
-    current_type: TokenType
+    line_number: usize,
+    column_number: usize,
 }
 
 pub fn tokenize(string: &str) -> Result<Vec<Token>, String> {
@@ -40,12 +40,12 @@ pub fn tokenize(string: &str) -> Result<Vec<Token>, String> {
     return tokenizer.tokenize(string);
 }
 
-impl <'a>Tokenizer<'a> {
+impl<'a> Tokenizer<'a> {
     fn new() -> Tokenizer<'a> {
         return Tokenizer {
-            start_index: 0,
             current_index: 0,
-            current_type: TokenType::Undefined,
+            line_number: 1,
+            column_number: 0,
 
             target: "",
             tokens: Vec::new()
@@ -56,14 +56,29 @@ impl <'a>Tokenizer<'a> {
         self.tokens = Vec::new();
         self.target = "";
 
-        self.start_index = 0;
         self.current_index = 0;
-        self.current_type = TokenType::Undefined;
+        self.column_number = 0;
+        self.line_number = 1;
+    }
+
+    fn increment_file_info(&mut self) {
+        if let Some(c) = self.peek_char() {
+            match c {
+                '\n' => {
+                    self.line_number += 1;
+                    self.column_number = 1;
+                }
+                _ => {
+                    self.column_number += 1;
+                }
+            }
+        }
+        self.current_index += 1;
     }
 
     fn next_index(&mut self) -> usize {
         let index = self.current_index;
-        self.current_index += 1;
+        self.increment_file_info();
 
         return index;
     }
@@ -77,39 +92,35 @@ impl <'a>Tokenizer<'a> {
         return self.target.chars().nth(self.current_index);
     }
 
-    fn save_token(&mut self) {
-        let text = String::from(&self.target[self.start_index..self.current_index - 1]);
-        self.save_token_with_text(text);
-    }
+    fn save_token(&mut self, mut token: Token) {
+        let from = token.file_info.index_from;
+        let to = self.current_index;
+        let text = String::from(&self.target[from..to]);
 
-    fn save_token_include_current(&mut self) {
-        let text = String::from(&self.target[self.start_index..self.current_index]);
-        self.save_token_with_text(text);
-    }
+        token.str = text;
+        token.file_info.column_number_to = self.column_number;
+        token.file_info.line_number_to = self.line_number;
+        token.file_info.index_to = self.current_index;
 
-    fn save_token_with_text(&mut self, text: String) {
-        let file_info = CodePoint {
-            start_index: self.start_index,
-            end_index: self.current_index
-        };
-        let token = Token { str: text, tp: self.current_type, file_info: file_info };
         self.tokens.push(token);
-
-        self.reset_index();
     }
 
-    fn reset_index(&mut self) {
-        self.start_index = self.current_index;
-        self.current_type = TokenType::Undefined;
-    }
+    fn new_token(&mut self, tp: TokenType) -> Token {
+        let token = Token {
+            str: String::from(""),
+            tp: tp,
+            file_info: CodePoint {
+                index_from: self.current_index-1,
+                index_to: self.current_index-1,
 
-    fn end_previous_token(&mut self) {
-        match self.current_type {
-            TokenType::Undefined => {}
-            _ => {
-                self.save_token();
+                line_number_from: self.line_number,
+                column_number_from: self.column_number,
+
+                line_number_to: self.line_number,
+                column_number_to: self.column_number,
             }
-        }
+        };
+        return token;
     }
 
     fn tokenize(&mut self, target: &'a str) -> Result<Vec<Token>, String> {
@@ -124,37 +135,47 @@ impl <'a>Tokenizer<'a> {
         while let Some(c) = self.next_char() {
             match c {
                 '0' ... '9' => {
-                    match self.current_type {
-                        TokenType::Undefined => self.current_type = TokenType::Numeric,
-                        TokenType::Numeric | TokenType::Alphanumeric => {}
-                        _ => {
-                            let msg = format!("Tokenizer: Invalid use of numeric characters!");
-                            return Err(msg);
+                    let token = self.new_token(TokenType::Numeric);
+
+                    loop {
+                        match self.peek_char() {
+                            Some(c) => match c {
+                                '0'...'9' | '.' => {self.next_char();}
+                                _ => {break;}
+                            },
+                            None => {
+                                break;
+                            }
                         }
                     }
+
+                    self.save_token(token);
                 }
                 'a' ... 'z' | 'A' ... 'Z' | '_' => {
-                    match self.current_type {
-                        TokenType::Undefined => self.current_type = TokenType::Alphanumeric,
-                        TokenType::Alphanumeric => {}
-                        _ => {
-                            let msg = format!("Tokenizer: Invalid use of alphanumeric characters!");
-                            return Err(msg);
+                    let token = self.new_token(TokenType::Alphanumeric);
+
+                    loop {
+                        match self.peek_char() {
+                            Some(c) => match c {
+                                'a' ... 'z' | 'A' ... 'Z' | '_' | '0'...'9' => {self.next_char();}
+                                _ => {break;}
+                            },
+                            None => {
+                                break;
+                            }
                         }
                     }
+
+                    self.save_token(token);
                 }
                 '"' => {
-                    self.end_previous_token();
-                    self.current_type = TokenType::String;
+                    let token = self.new_token(TokenType::String);
 
                     loop {
                         match self.next_char() {
                             Some(c) => match c {
                                 '\\' => { self.next_char(); }
-                                '"' => {
-                                    self.save_token_include_current();
-                                    break;
-                                }
+                                '"' => { break; }
                                 _ => {}
                             },
                             None => {
@@ -163,28 +184,28 @@ impl <'a>Tokenizer<'a> {
                             }
                         }
                     }
+
+                    self.save_token(token);
                 }
                 '(' | ')' => {
-                    self.end_previous_token();
-                    self.current_type = TokenType::Parenthesis;
-                    self.save_token_include_current();
+                    let token = self.new_token(TokenType::Parenthesis);
+                    self.save_token(token);
                 }
                 ':' => {
-                    self.end_previous_token();
+                    let mut token = self.new_token(TokenType::Undefined);
 
                     match self.peek_char() {
                         Some(c) => match c {
                             ':' => {
-                                self.next_index();
-                                self.current_type = TokenType::StaticAssignment;
+                                self.next_char();
+                                token.tp = TokenType::StaticAssignment;
                             }
                             '=' => {
-                                self.next_index();
-                                self.current_type = TokenType::DynamicAssignment;
+                                self.next_char();
+                                token.tp = TokenType::DynamicAssignment;
                             }
                             'a' ... 'z' | 'A' ... 'Z' => {
-                                self.current_type = TokenType::Token;
-                                self.save_token_include_current();
+                                token.tp = TokenType::Token;
                             }
                             _ => {
                                 let msg = format!("Tokenizer: Invalid end of input for : {}", c);
@@ -196,22 +217,14 @@ impl <'a>Tokenizer<'a> {
                             return Err(msg);
                         }
                     }
-                }
-                ' ' | '\n' | '\r' | '\t' => {
-                    match self.current_type {
-                        TokenType::Undefined => {
-                            self.reset_index()
-                        }
-                        _ => {
-                            self.save_token();
-                        }
-                    }
+
+                    self.save_token(token);
                 }
                 ';' => {
-                    self.end_previous_token();
-                    self.current_type = TokenType::EndOfStatement;
-                    self.save_token_include_current();
+                    let token = self.new_token(TokenType::EndOfStatement);
+                    self.save_token(token);
                 }
+                ' ' | '\n' | '\r' | '\t' => {}
                 _ => {
                     let msg = format!("Invalid end of input: {}", c);
                     return Err(msg);
