@@ -1,26 +1,60 @@
 use file_info::CodePoint;
 use std::mem;
+use std::iter::Peekable;
+use std::str::Chars;
 
 #[derive(Debug)]
 pub struct Token {
-    str: String,
-    tp: TokenType,
+    text: String,
+    token_type: TokenType,
     file_info: CodePoint
 }
 
-#[derive(Debug)]
-#[derive(Copy, Clone)]
+impl Token {
+    pub fn new() -> Token {
+        return Token {
+            text: String::from(""),
+            token_type: TokenType::Undefined,
+            file_info: CodePoint {
+                line_number_from: 0,
+                column_number_from: 0,
+
+                line_number_to: 0,
+                column_number_to: 0,
+            }
+        };
+    }
+
+    pub fn get_type(&self) -> TokenType {
+        return self.token_type;
+    }
+
+    pub fn get_text(&self) -> String {
+        return self.text.clone();
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub enum TokenType {
     Alphanumeric,
     Numeric,
 
-    Parenthesis,
+    OpenParenthesis,
+    CloseParenthesis,
+
+    OpenBlock,
+    CloseBlock,
+
+    ParameterDivider,
+    SubElement,
 
     StaticAssignment,
     DynamicAssignment,
 
-    Token,
-    String,
+    Symbol,
+    StaticString,
+
+    Operator,
 
     EndOfStatement,
     Undefined
@@ -28,14 +62,14 @@ pub enum TokenType {
 
 struct Tokenizer<'a> {
     tokens: Vec<Token>,
-    target: &'a str,
+    char_stream: Peekable<Chars<'a>>,
+    current_char: char,
 
-    current_index: usize,
     line_number: usize,
     column_number: usize,
 }
 
-pub fn tokenize(string: &str) -> Result<Vec<Token>, String> {
+pub fn tokenize(string: &str) -> Vec<Token> {
     let mut tokenizer = Tokenizer::new();
     return tokenizer.tokenize(string);
 }
@@ -43,22 +77,27 @@ pub fn tokenize(string: &str) -> Result<Vec<Token>, String> {
 impl<'a> Tokenizer<'a> {
     fn new() -> Tokenizer<'a> {
         return Tokenizer {
-            current_index: 0,
             line_number: 1,
             column_number: 0,
 
-            target: "",
+            char_stream: "".chars().peekable(),
+            current_char: '\n',
             tokens: Vec::new()
         };
     }
 
-    fn reset(&mut self) {
-        self.tokens = Vec::new();
-        self.target = "";
+    fn report_error(&self, token: &Token, msg: String) {
+        let msg = format!("Tokenizer Error!!!\n\n{}\nData: {:?}", msg, token);
+        panic!(msg);
+    }
 
-        self.current_index = 0;
-        self.column_number = 0;
+    fn reset(&mut self) {
         self.line_number = 1;
+        self.column_number = 0;
+
+        self.char_stream = "".chars().peekable();
+        self.current_char = '\n';
+        self.tokens = Vec::new();
     }
 
     fn increment_file_info(&mut self) {
@@ -73,46 +112,48 @@ impl<'a> Tokenizer<'a> {
                 }
             }
         }
-        self.current_index += 1;
-    }
-
-    fn next_index(&mut self) -> usize {
-        let index = self.current_index;
-        self.increment_file_info();
-
-        return index;
     }
 
     fn next_char(&mut self) -> Option<char> {
-        let index = self.next_index();
-        return self.target.chars().nth(index);
+        self.increment_file_info();
+        return match self.char_stream.next() {
+            Some(c) => {
+                self.current_char = c;
+                Some(c)
+            }
+            None => None
+        };
+    }
+
+    fn add_next_char(&mut self, token: &mut Token) -> Option<char> {
+        let next = self.next_char();
+
+        if let Some(c) = next {
+            token.text.push(c);
+        }
+
+        return next;
     }
 
     fn peek_char(&mut self) -> Option<char> {
-        return self.target.chars().nth(self.current_index);
+        return match self.char_stream.peek() {
+            Some(c) => Some(*c),
+            None => None
+        };
     }
 
     fn save_token(&mut self, mut token: Token) {
-        let from = token.file_info.index_from;
-        let to = self.current_index;
-        let text = String::from(&self.target[from..to]);
-
-        token.str = text;
         token.file_info.column_number_to = self.column_number;
         token.file_info.line_number_to = self.line_number;
-        token.file_info.index_to = self.current_index;
 
         self.tokens.push(token);
     }
 
     fn new_token(&mut self, tp: TokenType) -> Token {
         let token = Token {
-            str: String::from(""),
-            tp: tp,
+            text: self.current_char.to_string(),
+            token_type: tp,
             file_info: CodePoint {
-                index_from: self.current_index-1,
-                index_to: self.current_index-1,
-
                 line_number_from: self.line_number,
                 column_number_from: self.column_number,
 
@@ -123,116 +164,186 @@ impl<'a> Tokenizer<'a> {
         return token;
     }
 
-    fn tokenize(&mut self, target: &'a str) -> Result<Vec<Token>, String> {
-        self.target = target;
+    fn save_new_token(&mut self, tp: TokenType) {
+        let token = self.new_token(tp);
+        self.save_token(token);
+    }
+
+    fn tokenize(&mut self, target: &'a str) -> Vec<Token> {
+        self.char_stream = target.chars().peekable();
         let res = self.tokenize_using_state();
         self.reset();
 
         return res;
     }
 
-    fn tokenize_using_state(&mut self) -> Result<Vec<Token>, String> {
+    fn tokenize_number(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::Numeric);
+
+        loop {
+            match self.peek_char() {
+                Some(c) => match c {
+                    '0' ... '9' | '.' => { self.add_next_char(&mut token); }
+                    _ => { break; }
+                },
+                None => {
+                    break;
+                }
+            }
+        }
+
+        return token;
+    }
+
+    fn tokenize_word(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::Alphanumeric);
+
+        loop {
+            match self.peek_char() {
+                Some(c) => match c {
+                    'a' ... 'z' | 'A' ... 'Z' | '_' | '0' ... '9' => { self.add_next_char(&mut token); }
+                    _ => { break; }
+                },
+                None => {
+                    break;
+                }
+            }
+        }
+
+        return token;
+    }
+
+    fn tokenize_string(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::StaticString);
+
+        loop {
+            match self.add_next_char(&mut token) {
+                Some(c) => match c {
+                    '\\' => { self.add_next_char(&mut token); }
+                    '"' => { break; }
+                    _ => {}
+                },
+                None => {
+                    let msg = format!("Invalid end of input for \"string\"");
+                    self.report_error(&token, msg);
+                }
+            }
+        }
+
+        return token;
+    }
+
+    fn tokenize_static_assignment(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::StaticAssignment);
+        self.add_next_char(&mut token);
+        return token;
+    }
+
+    fn tokenize_dynamic_assignment(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::DynamicAssignment);
+        self.add_next_char(&mut token);
+        return token;
+    }
+
+    fn tokenize_symbol(&mut self) -> Token {
+        let token = self.new_token(TokenType::Symbol);
+        return token;
+    }
+
+    fn tokenize_operator(&mut self) -> Token {
+        let token = self.new_token(TokenType::Operator);
+        return token;
+    }
+
+    fn tokenize_using_state(&mut self) -> Vec<Token> {
         while let Some(c) = self.next_char() {
             match c {
                 '0' ... '9' => {
-                    let token = self.new_token(TokenType::Numeric);
-
-                    loop {
-                        match self.peek_char() {
-                            Some(c) => match c {
-                                '0'...'9' | '.' => {self.next_char();}
-                                _ => {break;}
-                            },
-                            None => {
-                                break;
-                            }
-                        }
-                    }
-
+                    let token = self.tokenize_number();
                     self.save_token(token);
                 }
                 'a' ... 'z' | 'A' ... 'Z' | '_' => {
-                    let token = self.new_token(TokenType::Alphanumeric);
-
-                    loop {
-                        match self.peek_char() {
-                            Some(c) => match c {
-                                'a' ... 'z' | 'A' ... 'Z' | '_' | '0'...'9' => {self.next_char();}
-                                _ => {break;}
-                            },
-                            None => {
-                                break;
-                            }
-                        }
-                    }
-
+                    let token = self.tokenize_word();
                     self.save_token(token);
                 }
                 '"' => {
-                    let token = self.new_token(TokenType::String);
-
-                    loop {
-                        match self.next_char() {
-                            Some(c) => match c {
-                                '\\' => { self.next_char(); }
-                                '"' => { break; }
-                                _ => {}
-                            },
-                            None => {
-                                let msg = format!("Tokenizer: Invalid end of input for \"string\" {}", c);
-                                return Err(msg);
-                            }
-                        }
-                    }
-
+                    let token = self.tokenize_string();
                     self.save_token(token);
                 }
-                '(' | ')' => {
-                    let token = self.new_token(TokenType::Parenthesis);
+                '(' => {
+                    let token = self.new_token(TokenType::OpenParenthesis);
+                    self.save_token(token);
+                }
+                ')' => {
+                    let token = self.new_token(TokenType::CloseParenthesis);
+                    self.save_token(token);
+                }
+                '+' | '-' | '*' | '^' => {
+                    let token = self.tokenize_operator();
+                    self.save_token(token);
+                }
+                '{' => {
+                    let token = self.new_token(TokenType::OpenBlock);
+                    self.save_token(token);
+                }
+                '}' => {
+                    let token = self.new_token(TokenType::CloseBlock);
+                    self.save_token(token);
+                }
+                '/' => {
+                    // Add comment support
+                    let token = self.tokenize_operator();
                     self.save_token(token);
                 }
                 ':' => {
-                    let mut token = self.new_token(TokenType::Undefined);
-
                     match self.peek_char() {
-                        Some(c) => match c {
-                            ':' => {
-                                self.next_char();
-                                token.tp = TokenType::StaticAssignment;
+                        Some(c) => {
+                            match c {
+                                ':' => {
+                                    let token = self.tokenize_static_assignment();
+                                    self.save_token(token);
+                                }
+                                '=' => {
+                                    let token = self.tokenize_dynamic_assignment();
+                                    self.save_token(token);
+                                }
+                                'a' ... 'z' | 'A' ... 'Z' => {
+                                    let token = self.tokenize_symbol();
+                                    self.save_token(token);
+                                }
+                                _ => {
+                                    let token = self.new_token(TokenType::Undefined);
+                                    let msg = format!("Invalid character preceding (:): {}", c);
+                                    self.report_error(&token, msg);
+                                }
                             }
-                            '=' => {
-                                self.next_char();
-                                token.tp = TokenType::DynamicAssignment;
-                            }
-                            'a' ... 'z' | 'A' ... 'Z' => {
-                                token.tp = TokenType::Token;
-                            }
-                            _ => {
-                                let msg = format!("Tokenizer: Invalid end of input for : {}", c);
-                                return Err(msg);
-                            }
-                        },
+                        }
                         None => {
-                            let msg = format!("Tokenizer: Invalid end of input for :");
-                            return Err(msg);
+                            let token = self.new_token(TokenType::Undefined);
+                            let msg = format!("Invalid end of input after :");
+                            self.report_error(&token, msg);
                         }
                     }
-
-                    self.save_token(token);
                 }
                 ';' => {
-                    let token = self.new_token(TokenType::EndOfStatement);
-                    self.save_token(token);
+                    self.save_new_token(TokenType::EndOfStatement);
+                }
+                ',' => {
+                    self.save_new_token(TokenType::ParameterDivider);
+                }
+                '.' => {
+                    self.save_new_token(TokenType::SubElement);
                 }
                 ' ' | '\n' | '\r' | '\t' => {}
                 _ => {
+                    let token = self.new_token(TokenType::Undefined);
                     let msg = format!("Invalid end of input: {}", c);
-                    return Err(msg);
+                    self.report_error(&token, msg);
                 }
             }
         }
 
         let tokens = mem::replace(&mut self.tokens, Vec::new());
-        return Ok(tokens);
+        return tokens;
     }
 }

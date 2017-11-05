@@ -3,23 +3,25 @@ mod file_info;
 mod parser;
 
 use tokenizer::tokenize;
+use parser::parse;
 
 fn main() {
-    let script =   "message :String :: \"Hello \\\" World\"; print(message);";
+    let script =   "\
+    {\
+        message :String :: \"Hello \\\" World\";\
+        print(message);\
+    }";
     // func :: (a :int, b :String){ }
+    // [] dot []
+    // 10.dot ()
+    // dot()
     // struct :: {}
     // array :: []
 
-    match tokenize(script) {
-        Ok(tokens) => {
+    let tokens = tokenize(script);
+    println!("{:?}", tokens);
 
-            println!("Tokenization complete: {:?}", tokens);
-        }
-        Err(msg) => {
-            println!("Something went wrong: '{}'", msg);
-        }
-    }
+    let ast = parse(tokens);
+    println!("{:?}", ast);
+    println!("Compilation complete!");
 }
-
-
-
