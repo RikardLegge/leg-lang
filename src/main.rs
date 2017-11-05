@@ -30,16 +30,18 @@ fn read_script_from_file() -> Result<String, io::Error> {
 fn main() {
     match read_script_from_file() {
         Ok(contents) => {
-            let script = &contents[..];
+            let script = & contents[..];
 
-            let tokens = tokenize(script);
-            println!("{:?}", tokens);
+            if let  Ok(tokens) = tokenize(script){
+                println !("{:?}", tokens);
 
-            let ast = parse(&tokens);
-            println!("{:?}", ast);
+                let ast = parse( & tokens);
+                println ! ("{:?}", ast);
 
-            let res = interp(ast);
-            //    println!("{:?}", );
+                println!("Output:\n");
+
+                let res = interp(ast);
+            }
         }
         Err(error) => {
             println!("Failed to read script: {}", error);

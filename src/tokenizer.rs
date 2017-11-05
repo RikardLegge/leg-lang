@@ -2,6 +2,42 @@ use file_info::CodePoint;
 use std::mem;
 use std::iter::Peekable;
 use std::str::Chars;
+use std::error::Error;
+
+use std::fmt::Display;
+use std::fmt::Formatter;
+use std::fmt;
+
+#[derive(Debug)]
+pub struct TokenizationError {
+    token: Token,
+    desc: String
+}
+
+impl Display for TokenizationError {
+    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
+        unimplemented!()
+    }
+}
+
+impl TokenizationError {
+    fn new(token: Token, desc: String) -> TokenizationError {
+        return TokenizationError {
+            token: token,
+            desc: desc
+        }
+    }
+}
+
+impl Error for TokenizationError {
+    fn description(&self) -> &str {
+        "Tokenization error!!!"
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        None
+    }
+}
 
 #[derive(Debug)]
 pub struct Token {
@@ -69,7 +105,7 @@ struct Tokenizer<'a> {
     column_number: usize,
 }
 
-pub fn tokenize(string: &str) -> Vec<Token> {
+pub fn tokenize(string: &str) -> Result<Vec<Token>, TokenizationError> {
     let mut tokenizer = Tokenizer::new();
     return tokenizer.tokenize(string);
 }
@@ -84,11 +120,6 @@ impl<'a> Tokenizer<'a> {
             current_char: '\n',
             tokens: Vec::new()
         };
-    }
-
-    fn report_error(&self, token: &Token, msg: String) {
-        let msg = format!("Tokenizer Error!!!\n\n{}\nData: {:?}", msg, token);
-        panic!(msg);
     }
 
     fn reset(&mut self) {
@@ -169,7 +200,7 @@ impl<'a> Tokenizer<'a> {
         self.save_token(token);
     }
 
-    fn tokenize(&mut self, target: &'a str) -> Vec<Token> {
+    fn tokenize(&mut self, target: &'a str) -> Result<Vec<Token>, TokenizationError> {
         self.char_stream = target.chars().peekable();
         let res = self.tokenize_using_state();
         self.reset();
@@ -213,7 +244,7 @@ impl<'a> Tokenizer<'a> {
         return token;
     }
 
-    fn tokenize_string(&mut self) -> Token {
+    fn tokenize_string(&mut self) -> Result<Token, TokenizationError> {
         let mut token = self.new_token(TokenType::StaticString);
 
         loop {
@@ -225,12 +256,12 @@ impl<'a> Tokenizer<'a> {
                 },
                 None => {
                     let msg = format!("Invalid end of input for \"string\"");
-                    self.report_error(&token, msg);
+                    return Err(TokenizationError::new(token, msg));
                 }
             }
         }
 
-        return token;
+        return Ok(token);
     }
 
     fn tokenize_static_assignment(&mut self) -> Token {
@@ -255,7 +286,7 @@ impl<'a> Tokenizer<'a> {
         return token;
     }
 
-    fn tokenize_using_state(&mut self) -> Vec<Token> {
+    fn tokenize_using_state(&mut self) -> Result<Vec<Token>, TokenizationError> {
         while let Some(c) = self.next_char() {
             match c {
                 '0' ... '9' => {
@@ -267,7 +298,7 @@ impl<'a> Tokenizer<'a> {
                     self.save_token(token);
                 }
                 '"' => {
-                    let token = self.tokenize_string();
+                    let token = self.tokenize_string()?;
                     self.save_token(token);
                 }
                 '(' => {
@@ -314,14 +345,14 @@ impl<'a> Tokenizer<'a> {
                                 _ => {
                                     let token = self.new_token(TokenType::Undefined);
                                     let msg = format!("Invalid character preceding (:): {}", c);
-                                    self.report_error(&token, msg);
+                                    return Err(TokenizationError::new(token, msg));
                                 }
                             }
                         }
                         None => {
                             let token = self.new_token(TokenType::Undefined);
                             let msg = format!("Invalid end of input after :");
-                            self.report_error(&token, msg);
+                            return Err(TokenizationError::new(token, msg));
                         }
                     }
                 }
@@ -338,12 +369,12 @@ impl<'a> Tokenizer<'a> {
                 _ => {
                     let token = self.new_token(TokenType::Undefined);
                     let msg = format!("Invalid end of input: {}", c);
-                    self.report_error(&token, msg);
+                    return Err(TokenizationError::new(token, msg));
                 }
             }
         }
 
         let tokens = mem::replace(&mut self.tokens, Vec::new());
-        return tokens;
+        return Ok(tokens);
     }
 }
