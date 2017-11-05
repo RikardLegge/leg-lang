@@ -1,5 +1,8 @@
-message :String :: "Hello \" World";
-print(message);
-print("test2");
+//message :String :: "Hello karina!";
+//print(message);
+// print("test2");
+//print(12);
 
-"test";
+//"test";
+//12;
+6 * (2 + 3);

@@ -7,6 +7,9 @@ use std::error::Error;
 use std::fmt::Display;
 use std::fmt::Formatter;
 
+use leg_sdl;
+use operators;
+
 #[derive(Debug)]
 pub struct InterpError {
     desc: String
@@ -19,15 +22,15 @@ impl Display for InterpError {
 }
 
 impl InterpError {
-    fn new(desc: String) -> InterpError {
+    pub fn new(desc: String) -> InterpError {
         return InterpError {
             desc: desc
-        }
+        };
     }
 }
 
 impl Error for InterpError {
-    fn description(&self) -> &str{
+    fn description(&self) -> &str {
         "Interpreter error!!!"
     }
 
@@ -38,11 +41,11 @@ impl Error for InterpError {
 
 #[derive(Clone, Debug)]
 pub enum InterpValue {
-    Void,
-    Number(f64),
-    String(String),
-    Function,
-    Struct
+    InterpVoid,
+    InterpNumber(f64),
+    InterpString(String),
+    InterpFunction,
+    InterpStruct
 }
 
 struct StackFrame {
@@ -71,7 +74,7 @@ impl Interp {
                 let frame = mem::replace(&mut self.current_frame, StackFrame::new());
                 self.stack.push(frame);
 
-                let mut last_result: InterpValue = InterpValue::Void;
+                let mut last_result: InterpValue = InterpValue::InterpVoid;
 
                 for statement in block.statements {
                     last_result = self.evaluate_next(statement)?;
@@ -88,29 +91,26 @@ impl Interp {
             AstNodeType::FunctionCall(boxed) => {
                 let function = *boxed;
 
-                if function.name == "print" {
-                    for arg in function.arguments {
-                        let val = self.evaluate_next(arg)?;
+                let mut args: Vec<InterpValue> = Vec::with_capacity(function.arguments.len());
+                for arg in function.arguments {
+                    let val = self.evaluate_next(arg)?;
+                    args.push(val);
+                }
 
-                        let string = match val {
-                            InterpValue::Void => {String::from("VOID")}
-                            InterpValue::Number(num) => {num.to_string()}
-                            InterpValue::String(val) => {val},
-                            InterpValue::Function => {String::from("FUNCTION")}
-                            InterpValue::Struct =>{String::from("STRUCT")}
-                        };
-                        println!("{}", string);
-                    }
+                if function.name == "print" {
+                    leg_sdl::print(args);
                 }
             }
             AstNodeType::StringValue(boxed) => {
                 let string = *boxed;
                 let value = string.value.clone();
 
-                return Ok(InterpValue::String(value));
+                return Ok(InterpValue::InterpString(value));
             }
             AstNodeType::NumberValue(boxed) => {
                 let number = *boxed;
+
+                return Ok(InterpValue::InterpNumber(number.value));
             }
             AstNodeType::Variable(boxed) => {
                 let variable = *boxed;
@@ -130,9 +130,21 @@ impl Interp {
 
                 self.current_frame.scope.insert(name, value);
             }
+            AstNodeType::OperatorCall(boxed) => {
+                let operation = *boxed;
+                let operator = operation.operator;
+                let lhs = self.evaluate_next(operation.lhs)?;
+                let rhs = self.evaluate_next(operation.rhs)?;
+
+                return operators::apply_operation(lhs, rhs, operator);
+            }
+            _ => {
+                let msg = format!("Unable to intepret AstNode: {:?}", node);
+                return Err(InterpError::new(msg));
+            }
         }
 
-        return Ok(InterpValue::Void);
+        return Ok(InterpValue::InterpVoid);
     }
 }
 
@@ -140,7 +152,7 @@ pub fn interp(ast: Ast) -> Result<InterpValue, InterpError> {
     let base_stack_frame = StackFrame::new();
 
     let mut interp = Interp {
-        stack: Vec::new(),
+        stack: Vec::with_capacity(100),
         current_frame: base_stack_frame
     };
     return interp.evaluate_next(ast.root);

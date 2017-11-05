@@ -15,8 +15,8 @@ pub struct TokenizationError {
 }
 
 impl Display for TokenizationError {
-    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
-        unimplemented!()
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "TokenizationErro: \n{}\n\n{:?}", self.desc, self.token)
     }
 }
 
@@ -100,6 +100,8 @@ pub enum TokenType {
     Symbol,
     StaticString,
 
+    Comment,
+
     Operator,
 
     EndOfStatement,
@@ -146,7 +148,7 @@ impl<'a> Tokenizer<'a> {
             match c {
                 '\n' => {
                     self.line_number += 1;
-                    self.column_number = 1;
+                    self.column_number = 0;
                 }
                 _ => {
                     self.column_number += 1;
@@ -274,6 +276,27 @@ impl<'a> Tokenizer<'a> {
         return Ok(token);
     }
 
+    fn tokenize_comment(&mut self) -> Result<Token, TokenizationError> {
+        let mut token = self.new_token(TokenType::Comment);
+
+        loop {
+            match self.peek_char() {
+                Some(c) => match c {
+                    '\n' => {break}
+                    _ => {
+                        self.add_next_char(&mut token);
+                    }
+                },
+                None => {
+                    let msg = format!("Invalid end of input for // comment");
+                    return Err(TokenizationError::new(token, msg));
+                }
+            }
+        }
+
+        return Ok(token);
+    }
+
     fn tokenize_static_assignment(&mut self) -> Token {
         let mut token = self.new_token(TokenType::StaticAssignment);
         self.add_next_char(&mut token);
@@ -319,7 +342,7 @@ impl<'a> Tokenizer<'a> {
                     let token = self.new_token(TokenType::CloseParenthesis);
                     self.save_token(token);
                 }
-                '+' | '-' | '*' | '^' => {
+                '+' | '-' | '*' | '^' | '%' => {
                     let token = self.tokenize_operator();
                     self.save_token(token);
                 }
@@ -333,8 +356,25 @@ impl<'a> Tokenizer<'a> {
                 }
                 '/' => {
                     // Add comment support
-                    let token = self.tokenize_operator();
-                    self.save_token(token);
+                    match self.peek_char() {
+                        Some(c) => {
+                            match c {
+                                '/' => {
+                                    let token = self.tokenize_comment()?;
+                                    self.save_token(token);
+                                }
+                                _ => {
+                                    let token = self.tokenize_operator();
+                                    self.save_token(token);
+                                }
+                            }
+                        }
+                        None => {
+                            let token = self.new_token(TokenType::Undefined);
+                            let msg = format!("Invalid end of input after /");
+                            return Err(TokenizationError::new(token, msg));
+                        }
+                    }
                 }
                 ':' => {
                     match self.peek_char() {

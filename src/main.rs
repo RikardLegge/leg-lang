@@ -2,6 +2,8 @@ mod tokenizer;
 mod file_info;
 mod parser;
 mod interp;
+mod operators;
+mod leg_sdl;
 
 use tokenizer::tokenize;
 use parser::parse;

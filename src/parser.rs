@@ -26,7 +26,7 @@ impl ParsingError {
         return ParsingError {
             token: token.clone(),
             desc: desc
-        }
+        };
     }
 }
 
@@ -36,14 +36,42 @@ impl Error for ParsingError {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum AstOperator {
+    Add,
+    Sub,
+    Mult,
+    Div,
+    Pow,
+    Mod
+}
+
+impl AstOperator {
+    fn from_token(token: &Token) -> AstOperator {
+        assert_eq!(token.get_type(), Operator);
+        let c = &token.get_text()[0..];
+        return match c {
+            "+" => { AstOperator::Add }
+            "-" => { AstOperator::Sub }
+            "*" => { AstOperator::Mult }
+            "/" => { AstOperator::Div }
+            "^" => { AstOperator::Pow }
+            "%" => { AstOperator::Mod }
+            _ => { panic!("Can not interpret '{}' as an operator", c); }
+        };
+    }
+}
+
 #[derive(Debug)]
 pub enum AstNodeType {
     Block(Box<AstBlock>),
+    OperatorCall(Box<AstOperatorCall>),
     FunctionCall(Box<AstFunctionCall>),
     StringValue(Box<AstStringValue>),
     NumberValue(Box<AstNumberValue>),
     Variable(Box<AstVariable>),
-    Assignment(Box<AstAssignment>)
+    Assignment(Box<AstAssignment>),
+    NullValue(Box<AstNullValue>)
 }
 
 #[derive(Debug)]
@@ -53,14 +81,6 @@ pub struct Ast {
 
 pub struct AstBlock {
     pub statements: Vec<AstNodeType>
-}
-
-impl AstBlock {
-    fn new() -> AstBlock {
-        return AstBlock {
-            statements: Vec::new()
-        };
-    }
 }
 
 impl fmt::Debug for AstBlock {
@@ -76,10 +96,29 @@ impl fmt::Debug for AstBlock {
 }
 
 #[derive(Debug)]
-struct AstFunctionCall {
+pub struct AstNullValue {}
+
+impl AstBlock {
+    fn new() -> AstBlock {
+        return AstBlock {
+            statements: Vec::new()
+        };
+    }
+}
+
+
+#[derive(Debug)]
+pub struct AstFunctionCall {
     pub name: String,
     pub arguments: Vec<AstNodeType>,
     pub body: Option<AstBlock>
+}
+
+#[derive(Debug)]
+pub struct AstOperatorCall {
+    pub rhs: AstNodeType,
+    pub lhs: AstNodeType,
+    pub operator: AstOperator
 }
 
 #[derive(Debug)]
@@ -88,8 +127,8 @@ struct AstStringValue {
 }
 
 #[derive(Debug)]
-struct AstNumberValue {
-    pub value: String
+pub struct AstNumberValue {
+    pub value: f64
 }
 
 #[derive(Debug)]
@@ -110,7 +149,6 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-
     fn next_token(&mut self) -> Option<&'a Token> {
         return match self.token_stream.next() {
             Some(token) => {
@@ -134,15 +172,31 @@ impl<'a> Parser<'a> {
         };
     }
 
+
     fn parse_number(&mut self) -> Result<AstNodeType, ParsingError> {
-        unimplemented!()
+        assert_eq!(self.current_token.get_type(), Numeric);
+
+        let text = self.current_token.get_text();
+        let maybe_number = match text.parse::<f64>() {
+            Ok(number) => { Ok(number) }
+            Err(err) => {
+                let msg = format!("Failed to parse number: {}", text);
+                Err(ParsingError::new(self.current_token, msg))
+            }
+        };
+        let value = AstNumberValue {
+            value: maybe_number?
+        };
+
+        let node = AstNodeType::NumberValue(Box::new(value));
+        return Ok(node);
     }
 
     fn parse_string(&mut self) -> Result<AstNodeType, ParsingError> {
         assert_eq!(self.current_token.get_type(), StaticString);
 
         let text = self.current_token.get_text();
-        let text_without_quotes = &text[1..text.len()-1];
+        let text_without_quotes = &text[1..text.len() - 1];
         let value = AstStringValue {
             value: String::from(text_without_quotes)
         };
@@ -151,25 +205,50 @@ impl<'a> Parser<'a> {
         return Ok(node);
     }
 
-    fn parse_expression(&mut self) -> Result<AstNodeType, ParsingError> {
-        match self.current_token.get_type() {
-            StaticString => {
-                return self.parse_string();
-            }
+    fn parse_partial_expression(&mut self) -> Result<AstNodeType, ParsingError> {
+        let token = self.current_token;
+        return match token.get_type() {
             Alphanumeric => {
-                let name = self.current_token.get_text();
-                let variable = AstVariable {
-                    name: name
-                };
+                self.parse_variable()
+            }
+            Numeric => {
+                self.parse_number()
+            }
+            StaticString => {
+                self.parse_string()
+            }
+            OpenParenthesis => {
+                self.next_token();
+                let expr = self.parse_expression();
+                self.next_token();
 
-                let node = AstNodeType::Variable(Box::new(variable));
-                return Ok(node);
+                if self.current_token.get_type() == CloseParenthesis {
+                    expr
+                } else {
+                    let msg = format!("Missing closing parenthesis");
+                    Err(ParsingError::new(token, msg))
+                }
             }
             _ => {
-                let msg = format!("Unexpected character when parsing an expression");
-                return Err(ParsingError::new(self.current_token, msg));
+                let msg = format!("Invalid token in expression");
+                Err(ParsingError::new(self.current_token, msg))
+            }
+        };
+    }
+
+    fn parse_expression(&mut self) -> Result<AstNodeType, ParsingError> {
+        let token = self.current_token;
+
+        let evaluatable = self.parse_partial_expression();
+
+        if let Some(token) = self.peek_token() {
+            if token.get_type() == Operator {
+                self.next_token();
+                return self.parse_operator(evaluatable?);
             }
         }
+
+        return evaluatable;
     }
 
     fn parse_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
@@ -203,7 +282,6 @@ impl<'a> Parser<'a> {
 
         let msg = format!("Unexpected character when parsing a typed assignment");
         return Err(ParsingError::new(self.current_token, msg));
-
     }
 
     fn parse_function_call(&mut self) -> Result<AstNodeType, ParsingError> {
@@ -227,7 +305,7 @@ impl<'a> Parser<'a> {
                 body: None
             };
             let node = AstNodeType::FunctionCall(Box::new(call));
-            return  Ok(node);
+            return Ok(node);
         }
 
         let msg = format!("Unexpected character when parsing a typed assignment");
@@ -235,6 +313,18 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_variable(&mut self) -> Result<AstNodeType, ParsingError> {
+        assert_eq!(self.current_token.get_type(), Alphanumeric);
+
+        let name = self.current_token.get_text();
+        let variable = AstVariable {
+            name: name
+        };
+
+        let node = AstNodeType::Variable(Box::new(variable));
+        return Ok(node);
+    }
+
+    fn parse_named(&mut self) -> Result<AstNodeType, ParsingError> {
         if let Some(token) = self.peek_token() {
             return match token.get_type() {
                 Symbol => {
@@ -247,8 +337,7 @@ impl<'a> Parser<'a> {
                     self.parse_function_call()
                 }
                 _ => {
-                    let msg = format!( "Unexpected token when after variable/function identifier");
-                    Err(ParsingError::new(token, msg))
+                    self.parse_variable()
                 }
             };
         } else {
@@ -257,33 +346,96 @@ impl<'a> Parser<'a> {
         }
     }
 
+    fn get_operator_precedence(&self, token: &Token) -> Result<usize, ParsingError> {
+        assert_eq!(token.get_type(), Operator);
+
+        let precedence = match token.get_type() {
+            Operator => {
+                match token.get_text().as_ref() {
+                    "+" | "-" => {
+                        1
+                    }
+                    "*" | "/" | "%" => {
+                        2
+                    }
+                    "^" => {
+                        3
+                    }
+                    _ => {
+                        let msg = format!("Invalid operator: {}", token.get_text());
+                        return Err(ParsingError::new(token, msg));
+                    }
+                }
+            }
+            OpenParenthesis => {
+                4
+            }
+            _ => {
+                let msg = format!("Invalid token after operator: ");
+                return Err(ParsingError::new(token, msg));
+            }
+        };
+
+        return Ok(precedence);
+    }
+
+    fn parse_operator(&mut self, lhs: AstNodeType) -> Result<AstNodeType, ParsingError> {
+        let lhs_operator = self.current_token;
+        assert_eq!(lhs_operator.get_type(), Operator);
+
+        if let Some(rhs_token) = self.next_token() {
+
+            let mut rhs = self.parse_partial_expression()?;
+            if let Some(rhs_operator) = self.peek_token() {
+                if rhs_operator.get_type() == Operator {
+                    if self.get_operator_precedence(lhs_operator)? < self.get_operator_precedence(rhs_operator)? {
+                        self.next_token();
+                        rhs = self.parse_operator(rhs)?;
+                    }
+                }
+            }
+
+            let operator = AstOperator::from_token(lhs_operator);
+            let call = AstOperatorCall {
+                lhs: lhs,
+                rhs: rhs,
+                operator: operator
+            };
+            let node = AstNodeType::OperatorCall(Box::new(call));
+            return Ok(node);
+        }
+
+        let msg = format!("Missing rhs operand");
+        return Err(ParsingError::new(self.current_token, msg));
+    }
+
     fn parse_statement(&mut self) -> Result<AstNodeType, ParsingError> {
         if let Some(token) = self.next_token() {
-            let evaluatable = match token.get_type() {
+            let mut evaluatable = match token.get_type() {
                 Alphanumeric => {
-                    self.parse_variable()
-                }
-                Numeric => {
-                    self.parse_number()
-                }
-                StaticString => {
-                    self.parse_string()
-                }
-                OpenParenthesis => {
-                    self.parse_expression()
+                    self.parse_named()
                 }
                 OpenBlock => {
-                    self.parse_block()
+                    return self.parse_block()
                 }
                 _ => {
-                    let msg = format!("Invalid token in block");
-                    Err(ParsingError::new(self.current_token, msg))
+                    self.parse_expression()
                 }
-            };
+            }?;
 
             if let Some(token) = self.next_token() {
-                if token.get_type() == EndOfStatement {
-                    return evaluatable;
+                if token.get_type() == Operator {
+                    evaluatable = self.parse_operator(evaluatable)?;
+                }
+
+                match token.get_type() {
+                    EndOfStatement => {
+                        return Ok(evaluatable);
+                    }
+                    _ => {
+                        let msg = format!("Statements must end with a ; token");
+                        return Err(ParsingError::new(self.current_token, msg));
+                    }
                 }
             }
         }
@@ -301,6 +453,11 @@ impl<'a> Parser<'a> {
                 break;
             }
 
+            if token.get_type() == Comment {
+                self.next_token();
+                continue;
+            }
+
             let evaluatable = self.parse_statement()?;
             block.statements.push(evaluatable);
         }
@@ -311,7 +468,7 @@ impl<'a> Parser<'a> {
 
     fn parse(&mut self) -> Result<Ast, ParsingError> {
         let root = self.parse_block()?;
-        let ast =  Ast {
+        let ast = Ast {
             root: root
         };
 
