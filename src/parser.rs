@@ -237,8 +237,6 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_expression(&mut self) -> Result<AstNodeType, ParsingError> {
-        let token = self.current_token;
-
         let evaluatable = self.parse_partial_expression();
 
         if let Some(token) = self.peek_token() {
@@ -252,7 +250,26 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
-        unimplemented!()
+        assert_eq!(self.current_token.get_type(), Alphanumeric);
+        let variable_name = self.current_token.get_text();
+        if let Some(assignment_token) = self.next_token() {
+            let assignment_type = assignment_token.get_type();
+            let variable = AstVariable {
+                name: variable_name
+            };
+
+            self.next_token();
+            let expression = self.parse_expression()?;
+            let assignment = AstAssignment {
+                to: variable,
+                from: expression
+            };
+            let node = AstNodeType::Assignment(Box::new(assignment));
+            return Ok(node);
+        }
+
+        let msg = format!("Unexpected character when parsing an assignment");
+        return Err(ParsingError::new(self.current_token, msg));
     }
 
     fn parse_typed_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
@@ -337,7 +354,7 @@ impl<'a> Parser<'a> {
                     self.parse_function_call()
                 }
                 _ => {
-                    self.parse_variable()
+                    self.parse_expression()
                 }
             };
         } else {
@@ -384,8 +401,8 @@ impl<'a> Parser<'a> {
         assert_eq!(lhs_operator.get_type(), Operator);
 
         if let Some(rhs_token) = self.next_token() {
-
             let mut rhs = self.parse_partial_expression()?;
+
             if let Some(rhs_operator) = self.peek_token() {
                 if rhs_operator.get_type() == Operator {
                     if self.get_operator_precedence(lhs_operator)? < self.get_operator_precedence(rhs_operator)? {
@@ -416,7 +433,7 @@ impl<'a> Parser<'a> {
                     self.parse_named()
                 }
                 OpenBlock => {
-                    return self.parse_block()
+                    return self.parse_block();
                 }
                 _ => {
                     self.parse_expression()
