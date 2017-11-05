@@ -46,10 +46,20 @@ pub struct Token {
     file_info: CodePoint
 }
 
+impl Clone for Token {
+    fn clone(&self) -> Self {
+        return Token {
+            text: self.text.clone(),
+            token_type: self.token_type,
+            file_info: self.file_info.clone(),
+        }
+    }
+}
+
 impl Token {
     pub fn new() -> Token {
         return Token {
-            text: String::from(""),
+            text: String::new(),
             token_type: TokenType::Undefined,
             file_info: CodePoint {
                 line_number_from: 0,

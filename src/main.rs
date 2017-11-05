@@ -32,15 +32,34 @@ fn main() {
         Ok(contents) => {
             let script = & contents[..];
 
-            if let  Ok(tokens) = tokenize(script){
-                println !("{:?}", tokens);
+            match tokenize(script) {
+                Ok(tokens) => {
+                    println !("{:?}", tokens);
 
-                let ast = parse( & tokens);
-                println ! ("{:?}", ast);
+                    match parse(&tokens) {
+                        Ok(ast) => {
+                            println!("{:?}", ast);
 
-                println!("Output:\n");
+                            println!("Output:\n");
 
-                let res = interp(ast);
+                            match interp(ast) {
+                                Ok(res) => {
+                                    println!("Result: {:?}", res);
+                                }
+                                Err(error) => {
+                                    println!("{}", error);
+                                }
+                            }
+                        }
+                        Err(error) => {
+                            println!("{}", error);
+                        }
+                    }
+                }
+                Err(error) => {
+                    println!("{}", error);
+                }
+
             }
         }
         Err(error) => {

@@ -2,8 +2,43 @@ use parser::{Ast, AstNodeType};
 use std::collections::HashMap;
 use std::mem;
 
-#[derive(Clone)]
-enum InterpValue {
+use std::fmt;
+use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::Display;
+use std::fmt::Formatter;
+
+#[derive(Debug)]
+pub struct InterpError {
+    desc: String
+}
+
+impl Display for InterpError {
+    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
+        unimplemented!()
+    }
+}
+
+impl InterpError {
+    fn new(desc: String) -> InterpError {
+        return InterpError {
+            desc: desc
+        }
+    }
+}
+
+impl Error for InterpError {
+    fn description(&self) -> &str{
+        "Interpreter error!!!"
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        None
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum InterpValue {
     Void,
     Number(f64),
     String(String),
@@ -29,7 +64,7 @@ struct Interp {
 }
 
 impl Interp {
-    fn evaluate_next(&mut self, node: AstNodeType) -> InterpValue {
+    fn evaluate_next(&mut self, node: AstNodeType) -> Result<InterpValue, InterpError> {
         match node {
             AstNodeType::Block(boxed) => {
                 let block = *boxed;
@@ -44,7 +79,8 @@ impl Interp {
                 if let Some(frame) = self.stack.pop() {
                     self.current_frame = frame;
                 } else {
-                    panic!("Unable to pop stack");
+                    let msg = format!("Unable to pop from stack");
+                    return Err(InterpError::new(msg));
                 }
             }
             AstNodeType::FunctionCall(boxed) => {
@@ -52,7 +88,7 @@ impl Interp {
 
                 if function.name == "print" {
                     for arg in function.arguments {
-                        let val = self.evaluate_next(arg);
+                        let val = self.evaluate_next(arg)?;
 
                         let string = match val {
                             InterpValue::Void => {String::from("VOID")}
@@ -69,7 +105,7 @@ impl Interp {
                 let string = *boxed;
                 let value = string.value.clone();
 
-                return InterpValue::String(value);
+                return Ok(InterpValue::String(value));
             }
             AstNodeType::NumberValue(boxed) => {
                 let number = *boxed;
@@ -79,30 +115,31 @@ impl Interp {
                 let name = variable.name;
 
                 if let Some(value) = self.current_frame.scope.get(&name) {
-                    return value.clone();
+                    return Ok(value.clone());
                 } else {
-                    panic!("Unable to find variable {}", name);
+                    let msg = format!("Unable to find variable {}", name);
+                    return Err(InterpError::new(msg));
                 }
             }
             AstNodeType::Assignment(boxed) => {
                 let assignment = *boxed;
                 let name = assignment.to.name;
-                let value = self.evaluate_next(assignment.from);
+                let value = self.evaluate_next(assignment.from)?;
 
                 self.current_frame.scope.insert(name, value);
             }
         }
 
-        return InterpValue::Void;
+        return Ok(InterpValue::Void);
     }
 }
 
-pub fn interp(ast: Ast) {
+pub fn interp(ast: Ast) -> Result<InterpValue, InterpError> {
     let base_stack_frame = StackFrame::new();
 
     let mut interp = Interp {
         stack: Vec::new(),
         current_frame: base_stack_frame
     };
-    interp.evaluate_next(ast.root);
+    return interp.evaluate_next(ast.root);
 }

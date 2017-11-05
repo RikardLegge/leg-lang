@@ -5,7 +5,42 @@ use std::slice::Iter;
 use std::iter::Peekable;
 use std::fmt;
 use std::ops::Deref;
+
 use std::fmt::Debug;
+use std::error::Error;
+use std::fmt::Display;
+use std::fmt::Formatter;
+
+#[derive(Debug)]
+pub struct ParsingError {
+    token: Token,
+    desc: String
+}
+
+impl Display for ParsingError {
+    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
+        unimplemented!()
+    }
+}
+
+impl ParsingError {
+    fn new(token: &Token, desc: String) -> ParsingError {
+        return ParsingError {
+            token: token.clone(),
+            desc: desc
+        }
+    }
+}
+
+impl Error for ParsingError {
+    fn description(&self) -> &str {
+        "Parsing error!!!"
+    }
+
+    fn cause(&self) -> Option<&Error> {
+        None
+    }
+}
 
 #[derive(Debug)]
 pub enum AstNodeType {
@@ -81,10 +116,6 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn report_error(&self, token: &Token, msg: &str) {
-        let msg = format!("Parser Error!!!\n\n{}\nData: {:?}", msg, token);
-        panic!(msg);
-    }
 
     fn next_token(&mut self) -> Option<&'a Token> {
         return match self.token_stream.next() {
@@ -109,15 +140,15 @@ impl<'a> Parser<'a> {
         };
     }
 
-    fn parse_number(&mut self) -> AstNodeType {
+    fn parse_number(&mut self) -> Result<AstNodeType, ParsingError> {
         unimplemented!()
     }
 
-    fn parse_string(&mut self) -> AstNodeType {
+    fn parse_string(&mut self) -> Result<AstNodeType, ParsingError> {
         unimplemented!()
     }
 
-    fn parse_expression(&mut self) -> AstNodeType {
+    fn parse_expression(&mut self) -> Result<AstNodeType, ParsingError> {
         match self.current_token.get_type() {
             StaticString => {
                 let text = self.current_token.get_text();
@@ -126,7 +157,8 @@ impl<'a> Parser<'a> {
                     value: String::from(text_without_quotes)
                 };
 
-                return AstNodeType::StringValue(Box::new(value));
+                let node = AstNodeType::StringValue(Box::new(value));
+                return Ok(node);
             }
             Alphanumeric => {
                 let name = self.current_token.get_text();
@@ -134,23 +166,21 @@ impl<'a> Parser<'a> {
                     name: name
                 };
 
-                return AstNodeType::Variable(Box::new(variable));
+                let node = AstNodeType::Variable(Box::new(variable));
+                return Ok(node);
             }
             _ => {
-                self.report_error(self.current_token, "Unexpected character when parsing an expression");
-                unreachable!();
+                let msg = format!("Unexpected character when parsing an expression");
+                return Err(ParsingError::new(self.current_token, msg));
             }
         }
-
-        self.report_error(self.current_token, "Unexpected character when parsing an expression");
-        unreachable!();
     }
 
-    fn parse_assignment(&mut self) -> AstNodeType {
+    fn parse_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
         unimplemented!()
     }
 
-    fn parse_typed_assignment(&mut self) -> AstNodeType {
+    fn parse_typed_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
         assert_eq!(self.current_token.get_type(), Alphanumeric);
         let variable_name = self.current_token.get_text();
         if let Some(symbol_start_token) = self.next_token() {
@@ -164,21 +194,23 @@ impl<'a> Parser<'a> {
                     };
 
                     self.next_token();
-                    let expression = self.parse_expression();
+                    let expression = self.parse_expression()?;
                     let assignment = AstAssignment {
                         to: variable,
                         from: expression
                     };
-                    return AstNodeType::Assignment(Box::new(assignment));
+                    let node = AstNodeType::Assignment(Box::new(assignment));
+                    return Ok(node);
                 }
             }
         }
 
-        self.report_error(self.current_token, "Unexpected character when parsing a typed assignment");
-        unreachable!();
+        let msg = format!("Unexpected character when parsing a typed assignment");
+        return Err(ParsingError::new(self.current_token, msg));
+
     }
 
-    fn parse_function_call(&mut self) -> AstNodeType {
+    fn parse_function_call(&mut self) -> Result<AstNodeType, ParsingError> {
         assert_eq!(self.current_token.get_type(), Alphanumeric);
         let function_name = self.current_token.get_text();
         if let Some(function_args_start) = self.next_token() {
@@ -190,7 +222,7 @@ impl<'a> Parser<'a> {
                     break;
                 }
 
-                let expression = self.parse_expression();
+                let expression = self.parse_expression()?;
                 arguments.push(expression);
             }
             let call = AstFunctionCall {
@@ -198,14 +230,15 @@ impl<'a> Parser<'a> {
                 arguments: arguments,
                 body: None
             };
-            return AstNodeType::FunctionCall(Box::new(call));
+            let node = AstNodeType::FunctionCall(Box::new(call));
+            return  Ok(node);
         }
 
-        self.report_error(self.current_token, "Unexpected character when parsing a typed assignment");
-        unreachable!();
+        let msg = format!("Unexpected character when parsing a typed assignment");
+        return Err(ParsingError::new(self.current_token, msg));
     }
 
-    fn parse_variable(&mut self) -> AstNodeType {
+    fn parse_variable(&mut self) -> Result<AstNodeType, ParsingError> {
         if let Some(token) = self.peek_token() {
             return match token.get_type() {
                 Symbol => {
@@ -218,17 +251,17 @@ impl<'a> Parser<'a> {
                     self.parse_function_call()
                 }
                 _ => {
-                    self.report_error(token, "Unexpected token when after variable/function identifier");
-                    unreachable!();
+                    let msg = format!( "Unexpected token when after variable/function identifier");
+                    Err(ParsingError::new(token, msg))
                 }
             };
         } else {
-            self.report_error(self.current_token, "Unexpected end of stream when parsing a variable");
-            unreachable!();
+            let msg = format!("Unexpected end of stream when parsing a variable");
+            return Err(ParsingError::new(self.current_token, msg));
         }
     }
 
-    fn parse_statement(&mut self) -> AstNodeType {
+    fn parse_statement(&mut self) -> Result<AstNodeType, ParsingError> {
         if let Some(token) = self.next_token() {
             let evaluatable = match token.get_type() {
                 Alphanumeric => {
@@ -247,8 +280,8 @@ impl<'a> Parser<'a> {
                     self.parse_block()
                 }
                 _ => {
-                    self.report_error(token, "Invalid token in block");
-                    unreachable!();
+                    let msg = format!("Invalid token in block");
+                    Err(ParsingError::new(self.current_token, msg))
                 }
             };
 
@@ -259,11 +292,11 @@ impl<'a> Parser<'a> {
             }
         }
 
-        self.report_error(self.current_token, "Unexpected end of stream when parsing a variable");
-        unreachable!();
+        let msg = format!("Unexpected end of stream when parsing statement");
+        return Err(ParsingError::new(self.current_token, msg));
     }
 
-    fn parse_block(&mut self) -> AstNodeType {
+    fn parse_block(&mut self) -> Result<AstNodeType, ParsingError> {
         let mut block = AstBlock::new();
 
         while let Some(token) = self.peek_token() {
@@ -272,37 +305,45 @@ impl<'a> Parser<'a> {
                 break;
             }
 
-            let evaluatable = self.parse_statement();
+            let evaluatable = self.parse_statement()?;
             block.statements.push(evaluatable);
         }
 
-        return AstNodeType::Block(Box::new(block));
+        let node = AstNodeType::Block(Box::new(block));
+        return Ok(node);
     }
 
-    fn parse_root_block(&mut self) -> AstNodeType {
+    fn parse_root_block(&mut self) -> Result<AstNodeType, ParsingError> {
         let mut block = AstBlock::new();
 
         while let Some(token) = self.next_token() {
             match token.get_type() {
                 OpenBlock => {
-                    let child_block = self.parse_block();
+                    let child_block = self.parse_block()?;
                     block.statements.push(child_block);
                 }
-                _ => { self.report_error(token, "Invalid end of input, file must start with a root block") }
+                _ => {
+                    let msg = format!("Invalid end of input, file must start with a root block");
+                    return Err(ParsingError::new(token, msg));
+                }
             }
         }
 
-        return AstNodeType::Block(Box::new(block));
+        let node = AstNodeType::Block(Box::new(block));
+        return Ok(node);
     }
 
-    fn parse(&mut self) -> Ast {
-        return Ast {
-            root: self.parse_root_block()
+    fn parse(&mut self) -> Result<Ast, ParsingError> {
+        let root = self.parse_root_block()?;
+        let ast =  Ast {
+            root: root
         };
+
+        return Ok(ast);
     }
 }
 
-pub fn parse(tokens: &Vec<Token>) -> Ast {
+pub fn parse(tokens: &Vec<Token>) -> Result<Ast, ParsingError> {
     let null_token = Token::new();
     let mut iter = tokens.iter().peekable();
 
