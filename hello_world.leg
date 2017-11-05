@@ -1,5 +1,5 @@
-{
-    message :String :: "Hello \" World";
-    print(message);
-    print("test");
-}
+message :String :: "Hello \" World";
+print(message);
+print("test2");
+
+"test";

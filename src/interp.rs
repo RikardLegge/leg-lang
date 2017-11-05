@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use std::mem;
 
 use std::fmt;
-use std::fmt::Debug;
 use std::error::Error;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -14,8 +13,8 @@ pub struct InterpError {
 }
 
 impl Display for InterpError {
-    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
-        unimplemented!()
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "InterpError: \n{}", self.desc)
     }
 }
 
@@ -72,12 +71,15 @@ impl Interp {
                 let frame = mem::replace(&mut self.current_frame, StackFrame::new());
                 self.stack.push(frame);
 
+                let mut last_result: InterpValue = InterpValue::Void;
+
                 for statement in block.statements {
-                    self.evaluate_next(statement);
+                    last_result = self.evaluate_next(statement)?;
                 }
 
                 if let Some(frame) = self.stack.pop() {
                     self.current_frame = frame;
+                    return Ok(last_result);
                 } else {
                     let msg = format!("Unable to pop from stack");
                     return Err(InterpError::new(msg));

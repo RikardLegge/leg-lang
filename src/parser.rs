@@ -1,12 +1,10 @@
 use tokenizer::Token;
-use tokenizer::TokenType;
 use tokenizer::TokenType::*;
 use std::slice::Iter;
 use std::iter::Peekable;
 use std::fmt;
 use std::ops::Deref;
 
-use std::fmt::Debug;
 use std::error::Error;
 use std::fmt::Display;
 use std::fmt::Formatter;
@@ -18,8 +16,8 @@ pub struct ParsingError {
 }
 
 impl Display for ParsingError {
-    fn fmt(&self, _: &mut Formatter) -> fmt::Result {
-        unimplemented!()
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "ParsingError: \n{}\n\n{:?}", self.desc, self.token)
     }
 }
 
@@ -34,11 +32,7 @@ impl ParsingError {
 
 impl Error for ParsingError {
     fn description(&self) -> &str {
-        "Parsing error!!!"
-    }
-
-    fn cause(&self) -> Option<&Error> {
-        None
+        "Parsing error"
     }
 }
 
@@ -145,20 +139,22 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_string(&mut self) -> Result<AstNodeType, ParsingError> {
-        unimplemented!()
+        assert_eq!(self.current_token.get_type(), StaticString);
+
+        let text = self.current_token.get_text();
+        let text_without_quotes = &text[1..text.len()-1];
+        let value = AstStringValue {
+            value: String::from(text_without_quotes)
+        };
+
+        let node = AstNodeType::StringValue(Box::new(value));
+        return Ok(node);
     }
 
     fn parse_expression(&mut self) -> Result<AstNodeType, ParsingError> {
         match self.current_token.get_type() {
             StaticString => {
-                let text = self.current_token.get_text();
-                let text_without_quotes = &text[1..text.len()-1];
-                let value = AstStringValue {
-                    value: String::from(text_without_quotes)
-                };
-
-                let node = AstNodeType::StringValue(Box::new(value));
-                return Ok(node);
+                return self.parse_string();
             }
             Alphanumeric => {
                 let name = self.current_token.get_text();
@@ -313,28 +309,8 @@ impl<'a> Parser<'a> {
         return Ok(node);
     }
 
-    fn parse_root_block(&mut self) -> Result<AstNodeType, ParsingError> {
-        let mut block = AstBlock::new();
-
-        while let Some(token) = self.next_token() {
-            match token.get_type() {
-                OpenBlock => {
-                    let child_block = self.parse_block()?;
-                    block.statements.push(child_block);
-                }
-                _ => {
-                    let msg = format!("Invalid end of input, file must start with a root block");
-                    return Err(ParsingError::new(token, msg));
-                }
-            }
-        }
-
-        let node = AstNodeType::Block(Box::new(block));
-        return Ok(node);
-    }
-
     fn parse(&mut self) -> Result<Ast, ParsingError> {
-        let root = self.parse_root_block()?;
+        let root = self.parse_block()?;
         let ast =  Ast {
             root: root
         };
