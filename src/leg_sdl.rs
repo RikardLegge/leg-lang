@@ -7,8 +7,8 @@ pub fn print(arguments: Vec<InterpValue>) {
             InterpVoid => {String::from("VOID")}
             InterpNumber(num) => {num.to_string()}
             InterpString(val) => {val}
-            InterpFunction => {String::from("FUNCTION")}
-            InterpStruct =>{String::from("STRUCT")}
+            InterpFunction(i) => {format!("FUNCTION {}", i)}
+            InterpStruct(i) =>{format!("STRUCT {}", i)}
         };
         println!("{}", string);
     }

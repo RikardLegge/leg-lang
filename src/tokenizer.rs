@@ -41,6 +41,7 @@ impl Error for TokenizationError {
 
 #[derive(Debug)]
 pub struct Token {
+    null_value: bool,
     text: String,
     token_type: TokenType,
     file_info: CodePoint
@@ -49,6 +50,7 @@ pub struct Token {
 impl Clone for Token {
     fn clone(&self) -> Self {
         return Token {
+            null_value: self.null_value,
             text: self.text.clone(),
             token_type: self.token_type,
             file_info: self.file_info.clone(),
@@ -58,9 +60,20 @@ impl Clone for Token {
 
 impl Token {
     pub fn new() -> Token {
+        return Token::typed(TokenType::Undefined);
+    }
+
+    pub fn null() -> Token {
+        let mut token = Token::typed(TokenType::Undefined);
+        token.null_value = true;
+        return token;
+    }
+
+    pub fn typed(tp : TokenType) -> Token {
         return Token {
+            null_value: false,
             text: String::new(),
-            token_type: TokenType::Undefined,
+            token_type: tp,
             file_info: CodePoint {
                 line_number_from: 0,
                 column_number_from: 0,
@@ -69,6 +82,10 @@ impl Token {
                 column_number_to: 0,
             }
         };
+    }
+
+    pub fn is_null(&self) -> bool {
+        return self.null_value;
     }
 
     pub fn get_type(&self) -> TokenType {
@@ -95,7 +112,7 @@ pub enum TokenType {
     SubElement,
 
     StaticAssignment,
-    DynamicAssignment,
+    VariableAssignment,
 
     Symbol,
     StaticString,
@@ -194,6 +211,7 @@ impl<'a> Tokenizer<'a> {
 
     fn new_token(&mut self, tp: TokenType) -> Token {
         let token = Token {
+            null_value: false,
             text: self.current_char.to_string(),
             token_type: tp,
             file_info: CodePoint {
@@ -303,8 +321,8 @@ impl<'a> Tokenizer<'a> {
         return token;
     }
 
-    fn tokenize_dynamic_assignment(&mut self) -> Token {
-        let mut token = self.new_token(TokenType::DynamicAssignment);
+    fn tokenize_variable_assignment(&mut self) -> Token {
+        let mut token = self.new_token(TokenType::VariableAssignment);
         self.add_next_char(&mut token);
         return token;
     }
@@ -376,6 +394,19 @@ impl<'a> Tokenizer<'a> {
                         }
                     }
                 }
+                '=' => {
+                    match self.peek_char() {
+                        Some(c) => {
+                            let token = self.tokenize_variable_assignment();
+                            self.save_token(token);
+                        }
+                        None => {
+                            let token = self.new_token(TokenType::Undefined);
+                            let msg = format!("Invalid end of input after =");
+                            return Err(TokenizationError::new(token, msg));
+                        }
+                    }
+                }
                 ':' => {
                     match self.peek_char() {
                         Some(c) => {
@@ -385,7 +416,7 @@ impl<'a> Tokenizer<'a> {
                                     self.save_token(token);
                                 }
                                 '=' => {
-                                    let token = self.tokenize_dynamic_assignment();
+                                    let token = self.tokenize_variable_assignment();
                                     self.save_token(token);
                                 }
                                 'a' ... 'z' | 'A' ... 'Z' => {

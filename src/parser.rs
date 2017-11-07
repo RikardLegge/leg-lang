@@ -69,8 +69,11 @@ pub enum AstNodeType {
     FunctionCall(Box<AstFunctionCall>),
     StringValue(Box<AstStringValue>),
     NumberValue(Box<AstNumberValue>),
+    FunctionDeclaration(Box<AstFunctionDeclaration>),
+    StructDeclaration(Box<AstStructDeclaration>),
     Variable(Box<AstVariable>),
     Assignment(Box<AstAssignment>),
+    Alias(Box<AstAlias>),
     NullValue(Box<AstNullValue>)
 }
 
@@ -122,7 +125,19 @@ pub struct AstOperatorCall {
 }
 
 #[derive(Debug)]
-struct AstStringValue {
+pub struct AstFunctionDeclaration {
+    pub arguments: Vec<AstNodeType>,
+    pub body: AstBlock
+}
+
+#[derive(Debug)]
+pub struct AstStructDeclaration {
+    pub fields: Vec<String>,
+    pub types: Vec<String>
+}
+
+#[derive(Debug)]
+pub struct AstStringValue {
     pub value: String
 }
 
@@ -132,17 +147,23 @@ pub struct AstNumberValue {
 }
 
 #[derive(Debug)]
-struct AstVariable {
+pub struct AstVariable {
     pub name: String
 }
 
 #[derive(Debug)]
-struct AstAssignment {
+pub struct AstAssignment {
     pub to: AstVariable,
     pub from: AstNodeType
 }
 
-struct Parser<'a> {
+#[derive(Debug)]
+pub struct AstAlias {
+    pub to: AstVariable,
+    pub from: AstNodeType
+}
+
+pub struct Parser<'a> {
     token_stream: Peekable<Iter<'a, Token>>,
     token_buffer: Vec<&'a Token>,
     current_token: &'a Token
@@ -249,56 +270,168 @@ impl<'a> Parser<'a> {
         return evaluatable;
     }
 
-    fn parse_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
-        assert_eq!(self.current_token.get_type(), Alphanumeric);
-        let variable_name = self.current_token.get_text();
-        if let Some(assignment_token) = self.next_token() {
-            let assignment_type = assignment_token.get_type();
-            let variable = AstVariable {
-                name: variable_name
+    fn parse_function_declaration(&mut self) -> Result<AstNodeType, ParsingError> {
+        assert_eq!(self.current_token.get_type(), OpenParenthesis);
+
+        let mut arguments: Vec<AstNodeType> = Vec::new();
+        while let Some(token) = self.next_token() {
+            if token.get_type() == CloseParenthesis {
+                break;
+            }
+
+            if token.get_type() != Alphanumeric {
+                let msg = format!("Unexpected character when parsing function declaration");
+                return Err(ParsingError::new(self.current_token, msg));
+            }
+            let argument_name = token.get_text();
+            let argument = AstVariable {
+                name: argument_name,
             };
+            let node = AstNodeType::Variable(Box::new(argument));
+            arguments.push(node);
 
-            self.next_token();
-            let expression = self.parse_expression()?;
-            let assignment = AstAssignment {
-                to: variable,
-                from: expression
-            };
-            let node = AstNodeType::Assignment(Box::new(assignment));
-            return Ok(node);
-        }
-
-        let msg = format!("Unexpected character when parsing an assignment");
-        return Err(ParsingError::new(self.current_token, msg));
-    }
-
-    fn parse_typed_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
-        assert_eq!(self.current_token.get_type(), Alphanumeric);
-        let variable_name = self.current_token.get_text();
-        if let Some(symbol_start_token) = self.next_token() {
-            assert_eq!(symbol_start_token.get_type(), Symbol);
-            if let Some(symbol_token) = self.next_token() {
-                assert_eq!(symbol_token.get_type(), Alphanumeric);
-                if let Some(assignment_token) = self.next_token() {
-                    let assignment_type = assignment_token.get_type();
-                    let variable = AstVariable {
-                        name: variable_name
-                    };
-
-                    self.next_token();
-                    let expression = self.parse_expression()?;
-                    let assignment = AstAssignment {
-                        to: variable,
-                        from: expression
-                    };
-                    let node = AstNodeType::Assignment(Box::new(assignment));
-                    return Ok(node);
+            if let Some(next) = self.peek_token() {
+               if next.get_type() == ParameterDivider {
+                   self.next_token();
+                   continue;
+               }
+                if next.get_type() == CloseParenthesis {
+                    continue
                 }
             }
+
+            let msg = format!("Unexpected character when parsing function declaration arguments");
+            return Err(ParsingError::new(self.current_token, msg));
         }
 
-        let msg = format!("Unexpected character when parsing a typed assignment");
-        return Err(ParsingError::new(self.current_token, msg));
+        self.next_token();
+        let block = self.parse_block()?;
+
+        match block {
+            AstNodeType::Block(boxed) => {
+                let body = *boxed;
+                let function = AstFunctionDeclaration {
+                    arguments: arguments,
+                    body: body,
+                };
+                let node = AstNodeType::FunctionDeclaration(Box::new(function));
+                return Ok(node);
+            }
+            _ => {
+                unreachable!();
+            }
+        }
+    }
+
+    fn parse_struct_declaration(&mut self)  -> Result<AstNodeType, ParsingError> {
+        assert_eq!(self.current_token.get_type(), OpenBlock);
+
+        let mut fields: Vec<String> = Vec::new();
+        let mut types: Vec<String> = Vec::new();
+        while let Some(token) = self.next_token() {
+            if token.get_type() == CloseBlock {
+                break;
+            }
+
+            let field_name_token = token;
+            if field_name_token.get_type() != Alphanumeric {
+                let msg = format!("Unexpected character when parsing struct declaratoin, Alphanumeric expected");
+                return Err(ParsingError::new(self.current_token, msg));
+            }
+            let field_name = field_name_token.get_text();
+            fields.push(field_name);
+
+            if self.next_token().unwrap().get_type() != Symbol {
+                let msg = format!("Unexpected character when parsing struct declaration, Symbol expected");
+                return Err(ParsingError::new(self.current_token, msg));
+            }
+
+            let field_type_token = self.next_token().unwrap();
+            if field_type_token.get_type() != Alphanumeric {
+                let msg = format!("Unexpected character when parsing struct declaration, Alphanumeric expected");
+                return Err(ParsingError::new(self.current_token, msg));
+            }
+            let field_type = field_type_token.get_text();
+            fields.push(field_type);
+        }
+        let structure = AstStructDeclaration {
+            fields: fields,
+            types: types,
+        };
+        let node = AstNodeType::StructDeclaration(Box::new(structure));
+        return Ok(node);
+    }
+
+    fn parse_static_expression(&mut self) -> Result<AstNodeType, ParsingError> {
+        let token = self.current_token;
+        return match token.get_type() {
+            OpenParenthesis => {
+                self.parse_function_declaration()
+            }
+            OpenBlock => {
+                self.parse_struct_declaration()
+            }
+            Alphanumeric | Numeric | StaticString => {
+                self.parse_expression()
+            }
+            _ => {
+                let msg = format!("Invalid token in expression");
+                Err(ParsingError::new(self.current_token, msg))
+            }
+        };
+    }
+
+    fn parse_assignment(&mut self) -> Result<AstNodeType, ParsingError> {
+        assert_eq!(self.current_token.get_type(), Alphanumeric);
+
+        let variable_name = self.current_token.get_text();
+        let mut variable_type: Option<String> = None;
+
+        let maybe_type_token = self.peek_token().unwrap();
+        if maybe_type_token.get_type() == Symbol {
+            variable_type = Some(maybe_type_token.get_text());
+            self.next_token();
+        }
+
+        let assignment_type_token = self.next_token().unwrap();
+        return match assignment_type_token.get_type() {
+            StaticAssignment => {
+                // Struct or function
+                let variable = AstVariable {
+                    name: variable_name
+                };
+
+                self.next_token();
+                let expression = self.parse_static_expression()?;
+                let alias = AstAlias {
+                    to: variable,
+                    from: expression,
+                };
+
+                let node = AstNodeType::Alias(Box::new(alias));
+                Ok(node)
+            }
+            VariableAssignment => {
+                // Variable or expression
+                let variable = AstVariable {
+                    name: variable_name
+                };
+
+                self.next_token();
+                let expression = self.parse_expression()?;
+                let assignment = AstAssignment {
+                    to: variable,
+                    from: expression
+                };
+
+                let node = AstNodeType::Assignment(Box::new(assignment));
+                Ok(node)
+            }
+            _ => {
+                let msg = format!("Unexpected character when parsing an assignment");
+                Err(ParsingError::new(self.current_token, msg))
+            }
+        }
     }
 
     fn parse_function_call(&mut self) -> Result<AstNodeType, ParsingError> {
@@ -315,6 +448,19 @@ impl<'a> Parser<'a> {
 
                 let expression = self.parse_expression()?;
                 arguments.push(expression);
+
+                if let Some(next) = self.peek_token() {
+                    if next.get_type() == ParameterDivider {
+                        self.next_token();
+                        continue
+                    }
+                    if next.get_type() == CloseParenthesis {
+                        continue;
+                    }
+                }
+
+                let msg = format!("Unexpected character when parsing function call arguments");
+                return Err(ParsingError::new(self.current_token, msg));
             }
             let call = AstFunctionCall {
                 name: function_name,
@@ -325,7 +471,7 @@ impl<'a> Parser<'a> {
             return Ok(node);
         }
 
-        let msg = format!("Unexpected character when parsing a typed assignment");
+        let msg = format!("Unexpected character when parsing function call");
         return Err(ParsingError::new(self.current_token, msg));
     }
 
@@ -344,10 +490,7 @@ impl<'a> Parser<'a> {
     fn parse_named(&mut self) -> Result<AstNodeType, ParsingError> {
         if let Some(token) = self.peek_token() {
             return match token.get_type() {
-                Symbol => {
-                    self.parse_typed_assignment()
-                }
-                DynamicAssignment | StaticAssignment => {
+                Symbol | VariableAssignment | StaticAssignment => {
                     self.parse_assignment()
                 }
                 OpenParenthesis => {
@@ -462,6 +605,9 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_block(&mut self) -> Result<AstNodeType, ParsingError> {
+        if !self.current_token.is_null() {
+            assert_eq!(self.current_token.get_type(), OpenBlock);
+        }
         let mut block = AstBlock::new();
 
         while let Some(token) = self.peek_token() {
@@ -494,7 +640,8 @@ impl<'a> Parser<'a> {
 }
 
 pub fn parse(tokens: &Vec<Token>) -> Result<Ast, ParsingError> {
-    let null_token = Token::new();
+    let null_token = Token::null();
+
     let mut iter = tokens.iter().peekable();
 
     let mut parser = Parser {
