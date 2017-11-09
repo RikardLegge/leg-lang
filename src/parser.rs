@@ -109,7 +109,6 @@ impl AstBlock {
     }
 }
 
-
 #[derive(Debug)]
 pub struct AstFunctionCall {
     pub name: String,
@@ -305,22 +304,14 @@ impl<'a> Parser<'a> {
         }
 
         self.next_token();
-        let block = self.parse_block()?;
+        let body = self.parse_block_raw()?;
 
-        match block {
-            AstNodeType::Block(boxed) => {
-                let body = *boxed;
-                let function = AstFunctionDeclaration {
-                    arguments: arguments,
-                    body: body,
-                };
-                let node = AstNodeType::FunctionDeclaration(Box::new(function));
-                return Ok(node);
-            }
-            _ => {
-                unreachable!();
-            }
-        }
+        let function = AstFunctionDeclaration {
+            arguments: arguments,
+            body: body,
+        };
+        let node = AstNodeType::FunctionDeclaration(Box::new(function));
+        return Ok(node);
     }
 
     fn parse_struct_declaration(&mut self)  -> Result<AstNodeType, ParsingError> {
@@ -462,11 +453,27 @@ impl<'a> Parser<'a> {
                 let msg = format!("Unexpected character when parsing function call arguments");
                 return Err(ParsingError::new(self.current_token, msg));
             }
+
+            let body = match self.peek_token() {
+                Some(token) => {
+                    match token.get_type() {
+                        OpenBlock => {
+                            self.next_token();
+                            let block = self.parse_block_raw()?;
+                            Some(block)
+                        },
+                        _ => {None}
+                    }
+                }
+                None => {None}
+            };
+
             let call = AstFunctionCall {
                 name: function_name,
                 arguments: arguments,
-                body: None
+                body: body
             };
+
             let node = AstNodeType::FunctionCall(Box::new(call));
             return Ok(node);
         }
@@ -578,6 +585,10 @@ impl<'a> Parser<'a> {
                 OpenBlock => {
                     return self.parse_block();
                 }
+                EndOfStatement => {
+                    let null = AstNullValue {};
+                    return Ok(AstNodeType::NullValue(Box::new(null)));
+                }
                 _ => {
                     self.parse_expression()
                 }
@@ -604,7 +615,7 @@ impl<'a> Parser<'a> {
         return Err(ParsingError::new(self.current_token, msg));
     }
 
-    fn parse_block(&mut self) -> Result<AstNodeType, ParsingError> {
+    fn parse_block_raw(&mut self) -> Result<AstBlock, ParsingError> {
         if !self.current_token.is_null() {
             assert_eq!(self.current_token.get_type(), OpenBlock);
         }
@@ -624,7 +635,11 @@ impl<'a> Parser<'a> {
             let evaluatable = self.parse_statement()?;
             block.statements.push(evaluatable);
         }
+        return Ok(block);
+    }
 
+    fn parse_block(&mut self) -> Result<AstNodeType, ParsingError> {
+        let block = self.parse_block_raw()?;
         let node = AstNodeType::Block(Box::new(block));
         return Ok(node);
     }

@@ -43,9 +43,21 @@ impl Error for InterpError {
 pub enum InterpValue {
     InterpVoid,
     InterpNumber(f64),
+    InterpBoolean(bool),
     InterpString(String),
     InterpStruct(usize),
-    InterpFunction(usize)
+    InterpFunction{id: usize, closure_id: usize }
+}
+
+impl InterpValue {
+    fn evals_to_true(&self) ->bool {
+        return match self {
+            &InterpValue::InterpNumber(num) => {
+                num != 0.0
+            },
+            _ => {false}
+        }
+    }
 }
 
 struct InterpStruct {
@@ -53,74 +65,139 @@ struct InterpStruct {
     pub types: Vec<String>
 }
 
-struct StackFrame {
-    scope: HashMap<String, InterpValue>,
+struct StackFrame<'a> {
+    index: usize,
+    creator: &'a AstNodeType,
+    closure_id: usize,
+    parent_frame: Option<Box<StackFrame<'a>>>
+}
+
+impl <'a>StackFrame<'a> {
+    fn new(creator: &'a AstNodeType, closure: usize) -> StackFrame<'a> {
+        return StackFrame {
+            index: 0,
+            creator: creator,
+            closure_id: closure,
+            parent_frame: None
+        };
+    }
+
+    fn set_parent_frame(&mut self, parent_frame: StackFrame<'a>) {
+        let parent_frame_index = parent_frame.index;
+        let new_frame = Some(Box::new(parent_frame));
+        mem::replace(&mut self.parent_frame, new_frame);
+
+        self.index = parent_frame_index+1;
+    }
+
+    fn remove_parent_frame(&mut self) -> Option<StackFrame<'a>> {
+        let parent_frame = mem::replace(&mut self.parent_frame, None);
+
+        if let Some(frame) = parent_frame {
+            let frame = Some(*frame);
+            return frame;
+        } else {
+            return None;
+        }
+    }
 }
 
 struct Closure<'a> {
-    parent_closure: Option<&'a Closure<'a>>,
-    variables: HashMap<String, InterpValue>
+    creator: &'a AstNodeType,
+    variables: HashMap<String, InterpValue>,
+    parent_id: Option<usize>
 }
 
 impl <'a>Closure<'a> {
-    fn new() -> Closure<'a> {
+    fn new(creator: &'a AstNodeType, parent_closure: Option<usize>) -> Closure<'a> {
         return Closure {
-            parent_closure: None,
-            variables: HashMap::new()
+            creator: creator,
+            variables: HashMap::new(),
+            parent_id: parent_closure
         };
     }
 
-    fn get_variable(&self, name: &String) -> Result<&InterpValue, InterpError> {
-        if let Some(interpValue) = self.variables.get(name) {
-            return Ok(interpValue);
-        } else if let Some(parent_closure) = self.parent_closure {
-            return parent_closure.get_variable(name);
-        } else {
-            let msg = format!("Unable to find variable {}", name);
-            return Err(InterpError::new(msg));
-        }
+    fn set_variable(&mut self, name: String, value: InterpValue) {
+
     }
 }
 
-impl StackFrame {
-    fn new() -> StackFrame {
-        return StackFrame {
-            scope: HashMap::new()
-        };
-    }
-}
+
 
 struct Interp<'a> {
+    stack_size: usize,
     structs: Vec<&'a AstStructDeclaration>,
     functions: Vec<&'a AstFunctionDeclaration>,
-    stack: Vec<StackFrame>,
-    current_frame: StackFrame,
-    current_closure: Closure<'a>
+    closures: Vec<Option<Closure<'a>>>,
+    current_frame: StackFrame<'a>
 }
 
 impl <'a>Interp<'a> {
+    fn get_closure_by_id(&self, id: usize) -> Result<&Closure<'a>, InterpError> {
+        return self.closures[id].as_ref().ok_or({
+            let msg = format!("The closure with id {} no longer exists", id);
+            InterpError::new(msg)
+        });
+    }
 
-    fn get_variable(&self, name: &String) -> Result<&InterpValue, InterpError> {
-        if let Some(interpValue) = self.current_frame.scope.get(name) {
+    fn get_mut_closure_by_id(&mut self, id: usize) -> Result<&mut Closure<'a>, InterpError> {
+        return self.closures[id].as_mut().ok_or({
+            let msg = format!("The closure with id {} no longer exists", id);
+            InterpError::new(msg)
+        });
+    }
+
+    fn get_current_closure(&self) -> Result<&Closure<'a>, InterpError>{
+        let id = self.current_frame.closure_id;
+        return self.get_closure_by_id(id);
+    }
+
+    fn get_current_mut_closure(&mut self) -> Result<&mut Closure<'a>, InterpError> {
+        let id = self.current_frame.closure_id;
+        return self.get_mut_closure_by_id(id);
+    }
+
+    fn get_variable_of_closure(&self, name: &String, closure: &'a Closure) -> Result<&InterpValue, InterpError> {
+        if let Some(interpValue) = closure.variables.get(name) {
             return Ok(interpValue);
+        } else if let Some(parent_id) = closure.parent_id {
+            let parent_closure = self.get_closure_by_id(parent_id)?;
+            return self.get_variable_of_closure(name, parent_closure);
         } else {
             let msg = format!("Unable to find variable {}", name);
             return Err(InterpError::new(msg));
         }
     }
 
+    fn get_variable(&self, name: &String) -> Result<&InterpValue, InterpError> {
+        let closure = self.get_current_closure()?;
+        return self.get_variable_of_closure(name, closure);
+    }
+
     fn set_variable(&mut self, name: String, value: InterpValue) -> Result<InterpValue, InterpError> {
-        self.current_frame.scope.insert(name, value);
+        let closure = self.get_current_mut_closure()?;
+        closure.variables.insert(name, value);
+
         return Ok(InterpValue::InterpVoid);
     }
 
-    fn push_frame(&mut self, new_frame: StackFrame) {
+    fn push_frame(&mut self, creator: &'a AstNodeType, closure_id: usize) -> Result<InterpValue, InterpError> {
+        if self.current_frame.index > self.stack_size {
+            let msg = format!("Stack overflow!");
+            return Err(InterpError::new(msg));
+        }
+
+        let mut new_frame = StackFrame::new(creator, closure_id);
         let frame = mem::replace(&mut self.current_frame, new_frame);
-        self.stack.push(frame);
+        self.current_frame.set_parent_frame(frame);
+
+        return Ok(InterpValue::InterpVoid);
     }
 
-    fn pop_frame(&mut self) -> Result<StackFrame, InterpError> {
-        if let Some(frame) = self.stack.pop() {
+    fn pop_frame(&mut self) -> Result<StackFrame<'a>, InterpError> {
+        let parent_frame = self.current_frame.remove_parent_frame();
+
+        if let Some(frame) = parent_frame {
             let old_frame = mem::replace(&mut self.current_frame, frame);
             return Ok(old_frame);
         } else {
@@ -129,25 +206,38 @@ impl <'a>Interp<'a> {
         }
     }
 
-    fn evaluate_block(&mut self, block: &'a AstBlock) -> Result<InterpValue, InterpError> {
-        let mut last_result: InterpValue = InterpValue::InterpVoid;
+    fn add_closure(&mut self, creator: &'a AstNodeType, parent_closure_id: usize) -> usize {
+        let closure = Closure::new(creator, Some(parent_closure_id));
+        let id = self.closures.len();
+        self.closures.push(Some(closure));
+        return id;
+    }
 
-        for statement in &block.statements {
-            last_result = self.evaluate_next(&statement)?;
-        }
+    fn evaluate_block(&mut self, creator: &'a AstNodeType, block: &'a AstBlock) -> Result<InterpValue, InterpError> {
+        let name = "A block";
+        let parent_closure_id = self.current_frame.closure_id;
+        let closure_id = self.add_closure(creator, parent_closure_id);
 
-        return Ok(last_result);
+        self.push_frame(creator, closure_id)?;
+        let res = {
+            let mut last_result: InterpValue = InterpValue::InterpVoid;
+
+            for statement in &block.statements {
+                last_result = self.evaluate_next(&statement)?;
+            }
+
+            last_result
+        };
+        self.pop_frame()?;
+
+        return Ok(res);
     }
 
     fn evaluate_next(&mut self, node: &'a AstNodeType) -> Result<InterpValue, InterpError> {
         match node {
             &AstNodeType::Block(ref boxed) => {
                 let block = &**boxed;
-
-                self.push_frame(StackFrame::new());
-                let res = self.evaluate_block(block);
-                self.pop_frame();
-                return res;
+                return self.evaluate_block(node, block);
             }
             &AstNodeType::FunctionCall(ref boxed) => {
                 let function = &**boxed;
@@ -159,15 +249,29 @@ impl <'a>Interp<'a> {
                 }
 
                 let name = &function.name;
-                if name == "print" {
+                if name == "if" {
+                    if args.len() != 1 {
+                        let msg = format!("if statements can only have one parameter");
+                        return Err(InterpError::new(msg));
+                    }
+
+                    if let Some(ref body) = function.body {
+                        let is_true = args[0].evals_to_true();
+
+                        return self.evaluate_block(node, body);
+                    } else {
+                        let msg = format!("If statement must have a body");
+                        return Err(InterpError::new(msg));
+                    }
+                } else if name == "print" {
                     leg_sdl::print(args);
                     return Ok(InterpValue::InterpVoid);
                 } else {
                     let mut maybe_index = {
                         let interp_value = self.get_variable(name)?;
                         match *interp_value {
-                            InterpValue::InterpFunction(function_index) => {
-                                Some(function_index)
+                            InterpValue::InterpFunction{id, closure_id} => {
+                                Some((id, closure_id))
                             }
                             _ => {
                                 None
@@ -175,8 +279,8 @@ impl <'a>Interp<'a> {
                         }
                     };
 
-                    if let Some(index) = maybe_index {
-                        let func :&AstFunctionDeclaration = self.functions.get(index).unwrap();
+                    if let Some((function_id, closure_id)) = maybe_index {
+                        let func :&AstFunctionDeclaration = self.functions.get(function_id).unwrap();
 
                         let mut argument_names :Vec<&str> = Vec::new();
                         for arg in &func.arguments {
@@ -195,15 +299,14 @@ impl <'a>Interp<'a> {
 
                         assert_eq!(argument_names.len(), args.len());
 
-                        let mut frame = StackFrame::new();
+                        self.push_frame(node, closure_id)?;
                         for name_value in argument_names.iter().zip(&args) {
                             let name = String::from(*name_value.0);
                             let value: InterpValue = name_value.1.clone();
-                            frame.scope.insert(name, value);
+                            self.set_variable(name, value);
                         }
 
-                        self.push_frame(frame);
-                        let res = self.evaluate_block(&func.body);
+                        let res = self.evaluate_block(node,&func.body);
                         self.pop_frame();
 
                         return res;
@@ -228,12 +331,8 @@ impl <'a>Interp<'a> {
                 let variable = &**boxed;
                 let name = &variable.name;
 
-                if let Some(value) = self.current_frame.scope.get(name) {
-                    return Ok(value.clone());
-                } else {
-                    let msg = format!("Unable to find variable {}", name);
-                    return Err(InterpError::new(msg));
-                }
+                let val = self.get_variable(name)?;
+                return Ok(val.clone());
             }
             &AstNodeType::Assignment(ref boxed) => {
                 let assignment = &**boxed;
@@ -241,6 +340,7 @@ impl <'a>Interp<'a> {
                 let value = self.evaluate_next(&assignment.from)?;
 
                 self.set_variable(name, value);
+                return Ok(InterpValue::InterpVoid);
             }
             &AstNodeType::OperatorCall(ref boxed) => {
                 let operation = &**boxed;
@@ -256,6 +356,7 @@ impl <'a>Interp<'a> {
                 let value = self.evaluate_next(&alias.from)?;
 
                 self.set_variable(name, value);
+                return Ok(InterpValue::InterpVoid);
             }
             &AstNodeType::StructDeclaration(ref boxed) => {
                 let dec = &**boxed;
@@ -271,28 +372,38 @@ impl <'a>Interp<'a> {
                 let index = self.functions.len();
                 self.functions.push(dec);
 
-                return Ok(InterpValue::InterpFunction(index));
+                let parent_closure_id = self.current_frame.closure_id;
+                let closure_id = self.add_closure(node, parent_closure_id);
+
+                return Ok(InterpValue::InterpFunction{id: index, closure_id: closure_id});
+            }
+            &AstNodeType::NullValue(ref boxed) => {
+                return Ok(InterpValue::InterpVoid);
             }
             _ => {
                 let msg = format!("Unable to intepret AstNode: {:?}", node);
                 return Err(InterpError::new(msg));
             }
         }
-
-        return Ok(InterpValue::InterpVoid);
     }
 }
 
 pub fn interp(ast: Ast) -> Result<InterpValue, InterpError> {
-    let base_stack_frame = StackFrame::new();
-    let base_closure = Closure::new();
+    let root_expr = &ast.root;
+
+    let mut closures: Vec<Option<Closure>> = Vec::new();
+    let base_closure = Closure::new(root_expr, None);
+    let base_closure_id = closures.len();
+    closures.push(Some(base_closure));
+
+    let base_stack_frame = StackFrame::new(root_expr, base_closure_id);
 
     let mut interp = Interp {
+        stack_size: 10,
         functions: Vec::new(),
         structs: Vec::new(),
-        stack: Vec::with_capacity(100),
-        current_frame: base_stack_frame,
-        current_closure: base_closure
+        closures: closures,
+        current_frame: base_stack_frame
     };
-    return interp.evaluate_next(&ast.root);
+    return interp.evaluate_next(root_expr);
 }

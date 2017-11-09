@@ -2,8 +2,17 @@ test :: {
 
 };
 
+test2 :: (num1) {
+    print(num1);
+};
+
 test :: (num1, num2) {
     print(num1, num2);
+    test2(num1+num2);
+};
+
+if(0) {
+    print("Ok!");
 };
 
 //message :: "Hello karina!";
@@ -16,8 +25,8 @@ test :: (num1, num2) {
 
 //"test";
 //12;
-a :: 10 + 5;
-a * (a + 3);
+//a :: 10 + 5;
+//a * (a + 3);
 
-test(a, a + 1);
-
+//test2(10);
+//test(a, a + 1);
