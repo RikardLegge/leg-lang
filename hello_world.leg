@@ -11,8 +11,24 @@ test :: (num1, num2) {
     test2(num1+num2);
 };
 
+do_time :: (val) {
+    count=0;
+    diff = val-count;
+    while(diff) {
+        body();
+    }
+}
+
+do_time(10) {
+    print("hej");
+}
+
+if(1) {
+    print("Should print!");
+};
+
 if(0) {
-    print("Ok!");
+    print("NOOOOO!!!");
 };
 
 //message :: "Hello karina!";

@@ -113,7 +113,8 @@ impl AstBlock {
 pub struct AstFunctionCall {
     pub name: String,
     pub arguments: Vec<AstNodeType>,
-    pub body: Option<AstBlock>
+    pub body: Option<AstBlock>,
+    pub next: Option<AstFunctionCall>
 }
 
 #[derive(Debug)]
@@ -471,7 +472,8 @@ impl<'a> Parser<'a> {
             let call = AstFunctionCall {
                 name: function_name,
                 arguments: arguments,
-                body: body
+                body: body,
+                next: None
             };
 
             let node = AstNodeType::FunctionCall(Box::new(call));

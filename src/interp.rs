@@ -249,7 +249,9 @@ impl <'a>Interp<'a> {
                 }
 
                 let name = &function.name;
-                if name == "if" {
+                if name == "while" {
+                    
+                } else if name == "if" {
                     if args.len() != 1 {
                         let msg = format!("if statements can only have one parameter");
                         return Err(InterpError::new(msg));
@@ -258,7 +260,11 @@ impl <'a>Interp<'a> {
                     if let Some(ref body) = function.body {
                         let is_true = args[0].evals_to_true();
 
-                        return self.evaluate_block(node, body);
+                        if is_true {
+                            return self.evaluate_block(node, body);
+                        } else {
+                            return Ok(InterpValue::InterpVoid);
+                        }
                     } else {
                         let msg = format!("If statement must have a body");
                         return Err(InterpError::new(msg));
